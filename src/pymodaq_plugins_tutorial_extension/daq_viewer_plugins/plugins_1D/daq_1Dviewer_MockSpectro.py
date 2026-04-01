@@ -1,13 +1,11 @@
 import numpy as np
-
-from pymodaq_utils.utils import ThreadCommand
-from pymodaq_data.data import DataFromPlugins, DataToExport, Axis
+from pymodaq.utils.data import DataFromPlugins, DataToExport, Axis
 from pymodaq_gui.parameter import Parameter
-
 from pymodaq.control_modules.viewer_utility_classes import DAQ_Viewer_base, \
     comon_parameters, main
 from pymodaq_plugins_tutorial_extension.hardware.controller import \
     MockSpectrograph
+
 
 class DAQ_1DViewer_MockSpectro(DAQ_Viewer_base):
     """Simulated Spectrometer Instrument plugin class for a 1D viewer.
@@ -55,7 +53,7 @@ class DAQ_1DViewer_MockSpectro(DAQ_Viewer_base):
         if param.name() in self.parameter_names:
             setattr(self.controller, param.name(), param.value())
 
-     def ini_detector(self, controller=None):
+    def ini_detector(self, controller=None):
         """Detector communication initialization
 
         Parameters
@@ -83,52 +81,33 @@ class DAQ_1DViewer_MockSpectro(DAQ_Viewer_base):
 
     def close(self):
         """Terminate the communication protocol"""
-        ## TODO for your custom plugin
-        raise NotImplementedError  # when writing your own plugin remove this line
-        if self.is_master:
-            #  self.controller.your_method_to_terminate_the_communication()  # when writing your own plugin replace this line
-            ...
+
+        initialized = False
 
     def grab_data(self, Naverage=1, **kwargs):
-        """Start a grab from the detector
+        """Start grabbing from the detector
+        Use a synchrone acquisition (blocking function)
 
         Parameters
         ----------
         Naverage: int
-            Number of hardware averaging (if hardware averaging is possible, self.hardware_averaging should be set to
-            True in class preamble and you should code this implementation)
-        kwargs: dict
-            others optionals arguments
+            Number of hardware averaging.
         """
-        ## TODO for your custom plugin: you should choose EITHER the synchrone or the asynchrone version following
 
-        ##synchrone version (blocking function)
-        data_tot = self.controller.your_method_to_start_a_grab_snap()
-        self.dte_signal.emit(DataToExport('myplugin',
-                                          data=[DataFromPlugins(name='Mock1', data=data_tot,
-                                                                dim='Data1D', labels=['dat0', 'data1'],
-                                                                axes=[self.x_axis])]))
+        spectrum, time_stamp = self.controller.grab_spectrum()
 
-        ##asynchrone version (non-blocking function with callback)
-        self.controller.your_method_to_start_a_grab_snap(self.callback)
-        #########################################################
-
-
-    def callback(self):
-        """optional asynchrone method called when the detector has finished its acquisition of data"""
-        data_tot = self.controller.your_method_to_get_data_from_buffer()
-        self.dte_signal.emit(DataToExport('myplugin',
-                                          data=[DataFromPlugins(name='Mock1', data=data_tot,
-                                                                dim='Data1D', labels=['dat0', 'data1'])]))
+        dfp_spectrum = \
+            DataFromPlugins(name='MockSpectro', data=[spectrum], dim='Data1D',
+                            labels=['spectrum'], axes=[self.x_axis])
+        dfp_time_stamp = \
+            DataFromPlugins(name='TimeStamp', data=[np.array([time_stamp])],
+                            dim='Data0D', labels=['time stamp'])
+        
+        self.dte_signal.emit(DataToExport(name='spectrum',
+                                          data=[dfp_spectrum, dfp_time_stamp]))
 
     def stop(self):
-        """Stop the current grab hardware wise if necessary"""
-        ## TODO for your custom plugin
-        raise NotImplementedError  # when writing your own plugin remove this line
-        self.controller.your_method_to_stop_acquisition()  # when writing your own plugin replace this line
-        self.emit_status(ThreadCommand('Update_Status', ['Some info you want to log']))
-        ##############################
-        return ''
+        pass
 
 
 if __name__ == '__main__':
