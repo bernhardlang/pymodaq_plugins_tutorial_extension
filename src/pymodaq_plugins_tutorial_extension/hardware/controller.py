@@ -67,7 +67,9 @@ class MockSpectrograph:
 
     def grab_spectrum(self):
         time.sleep(max(self.integration_time * 1e-6, 0.001))
-        return self.simulate_spectrum(self.get_shutter_value('dark') > 1000,
+        #return self.simulate_spectrum(self.get_shutter_value('dark') > 1000,
+        #                              self.with_sample)
+        return self.simulate_spectrum(self.get_shutter_value('dark') > 0,
                                       self.with_sample)
 
     def get_shutter_value(self, axis):
