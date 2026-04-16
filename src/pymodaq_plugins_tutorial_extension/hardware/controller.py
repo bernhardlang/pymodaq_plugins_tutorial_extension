@@ -60,7 +60,7 @@ class MockSpectrograph:
             if sample:
                 light *= np.pow(10, -self.absorption)
             data += np.random.poisson(light) / self.pe_per_lsb
-        max_adc = 1 << self.adc_bits
+        max_adc = (1 << self.adc_bits) - 1
         data = np.where(data < max_adc, np.floor(data), max_adc)
 
         return data, time.time()

@@ -1,6 +1,6 @@
 [features]
 instruments = true
-extensions = false
+extensions = true
 models = false
 h5exporters = false
 scanners = false
