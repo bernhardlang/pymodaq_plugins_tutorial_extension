@@ -208,11 +208,6 @@ class Absorption(CustomExt):
             self.raw_data_viewer.show_data(dfp)
         self.show_data(mean, error, 'raw')
 
-    def show_data(self, mean, error, name, raw=None, reference=None):
-        dfp = DataFromPlugins(name=name, data=[mean, error], dim='Data1D',
-                              labels=[name, 'error'], axes=[self.x_axis])
-        self.spectrum_viewer.show_data(dfp)
-
     def do_things_after_preset_set(self, preset_name: str):
         self.modules_manager.actuators_all = \
             self.dashboard.modules_manager.actuators_all
