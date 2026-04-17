@@ -28,16 +28,9 @@ plugin_config = PluginConfig()
 EXTENSION_NAME = 'Absorption'
 CLASS_NAME = 'Absorption'
 
-RAW             = 0
-WITH_BACKGROUND = 1
-ABSORPTION      = 2
-
-
 class Absorption(CustomExt):
 
-    measurement_modes = { 'Raw': RAW, 'Background Subtracted': WITH_BACKGROUND,
-                          'Absorption': ABSORPTION }
-    mode_names = list(measurement_modes.keys())
+    measurement_modes = [ 'Raw', 'Background Subtracted', 'Absorption' ]
 
     device_params = [
         {'name': 'integration_time', 'title': 'Integration Time [ms]',
@@ -50,8 +43,8 @@ class Absorption(CustomExt):
 
     application_params = [
         {'name': 'measurement_mode', 'title': 'Measurement Mode',
-         'type': 'list', 'limits': mode_names, 'value': mode_names[0],
-         'tip': 'Measurement Mode'},
+         'type': 'list', 'limits': measurement_modes,
+         'value': measurement_modes[0], 'tip': 'Measurement Mode'},
         {'name': 'back_averaging', 'title': 'Background Averaging',
          'type': 'int', 'min': 1, 'max': 1000, 'value': 100,
          'tip': 'Background Software Averaging'},
@@ -169,11 +162,51 @@ class Absorption(CustomExt):
             self.spectrum_viewer.show_data(spectro_data)
             return
 
-        mean, error = \
+        current_mean, current_error = \
             self.average_data(self.sum_data, self.squares_data,
                               self.n_samples)
-        self.show_data(mean, error, 'raw')
         self.n_samples = 0
+
+        if self.settings['measurement_mode'] == 'Raw':
+            self.show_data(current_mean, current_error, 'raw')
+            return
+
+        mean_signal = current_mean - self.background
+        error_signal = np.sqrt(current_error**2 + self.error_background**2)
+
+        if self.settings['measurement_mode'] == 'Background Subtracted':
+            self.show_data(mean_signal, error_signal, 'signal', current_mean)
+        else: # self.settings['measurement_mode'] == ABSORPTION:
+            valid_mask = \
+                np.logical_and(mean_signal > 0, self.reference_valid_mask)
+            self.absorption = \
+                np.where(valid_mask,
+                         -np.log10(mean_signal / self.reference), 0)
+            self.error_absorption = \
+                1 / np.log(10) \
+                * np.sqrt((current_error / mean_signal)**2
+                          + ((self.error_reference + self.error_background)
+                             / self.reference)**2
+                          + (1 / mean_signal - 1 / self.reference)**2
+                            * self.error_background)
+
+            self.show_data(self.absorption, self.error_absorption, 'absorption',
+                           current_mean, self.reference)
+
+    def show_data(self, mean, error, name, raw=None, reference=None):
+        dfp = DataFromPlugins(name=name, data=[mean, error], dim='Data1D',
+                              labels=[name, 'error'], axes=[self.x_axis])
+        self.spectrum_viewer.show_data(dfp)
+        if raw is not None:
+            data = [raw]
+            labels = ['raw signal']
+            if reference is not None:
+                data.append(reference)
+                labels.append('reference')
+            dfp = DataFromPlugins(name='raw', data=data, dim='Data1D',
+                                  labels=labels, axes=[self.x_axis])
+            self.raw_data_viewer.show_data(dfp)
+        self.show_data(mean, error, 'raw')
 
     def show_data(self, mean, error, name, raw=None, reference=None):
         dfp = DataFromPlugins(name=name, data=[mean, error], dim='Data1D',
@@ -209,8 +242,8 @@ class Absorption(CustomExt):
     def connect_things(self):
         self.connect_action('acquire', self.start_acquiring)
         self.connect_action('stop', self.stop_acquiring)
-        #self.connect_action('background', self.take_background)
-        #self.connect_action('reference', self.take_reference)
+        self.connect_action('background', self.take_background)
+        self.connect_action('reference', self.take_reference)
 
     def start_acquiring(self):
         self.n_samples = 0
@@ -223,6 +256,60 @@ class Absorption(CustomExt):
         self._actions["acquire"].setEnabled(True)
         self._actions["stop"].setEnabled(False)
         self.detector.stop_grab()
+
+    def take_background(self):
+        """Grab one background spectrum."""
+
+        if hasattr(self.detector.controller, "set_shutter_value"):
+            self.detector.controller.set_shutter_value('dark', 0)
+
+        self.n_back = self.settings.child('back_averaging').value()
+        for i in range(0, self.n_back):
+            background,timestamp = self.detector.controller.grab_spectrum()
+            self.accumulate_data(background, i)
+        self.background, self.error_background = \
+            self.average_data(self.sum_data, self.squares_data, self.n_back)
+        self.have_background = True
+        self.adjust_actions()
+# temp, move this to take data, recover wl from plugin data
+        dfp = DataFromPlugins(name='Spectrograph',
+                              data=[self.background, self.error_background],
+                              dim='Data1D', labels=['background', 'error'],
+                              axes=[self.x_axis])
+        self.spectrum_viewer.show_data(dfp)
+        self.background_viewer.show_data(dfp)
+        if hasattr(self.detector.controller, "set_shutter_value"):
+            self.detector.controller.set_shutter_value('dark', 1200)
+
+    def take_reference(self):
+        """Grab one reference spectrum."""
+
+        self.detector.controller.with_sample = False
+
+        self.n_ref = self.settings.child('ref_averaging').value()
+
+        for i in range(0, self.n_back):
+            reference,timestamp = self.detector.controller.grab_spectrum()
+            self.accumulate_data(reference, i)
+        self.reference, self.error_reference = \
+            self.average_data(self.sum_data, self.squares_data, self.n_ref)
+        self.reference -= self.background
+
+        self.reference_valid_mask = self.reference > 0
+        self.have_reference = True
+        self.adjust_actions()
+        dfp = DataFromPlugins(name='Spectrograph',
+                              data=[self.reference, self.error_reference],
+                              dim='Data1D', labels=['reference', 'error'],
+                              axes=[self.x_axis])
+        self.spectrum_viewer.show_data(dfp)
+        dfp = DataFromPlugins(name='Spectrograph',
+                              data=[self.reference, self.error_reference],
+                              dim='Data1D', labels=['reference', 'error'],
+                              axes=[self.x_axis])
+        self.raw_data_viewer.show_data(dfp)
+
+        self.detector.controller.with_sample = True
 
     def setup_menu(self, menubar: QtWidgets.QMenuBar = None):
         return
@@ -237,7 +324,7 @@ class Absorption(CustomExt):
                                          'integration_time') \
                                   .setValue(param.value())
             # background and reference should be measurement with the same i.t.
-            if self.measurement_mode in [WITH_BACKGROUND, ABSORPTION]:
+            if self.settings['measurement_mode'] in [WITH_BACKGROUND, ABSORPTION]:
                 self.detector.stop()
             self.have_background = False
             self.have_reference = False
@@ -248,9 +335,6 @@ class Absorption(CustomExt):
                                          .setValue(param.value())
         elif param.name() == "back_averaging":
             self.background_average = param.value()
-        elif param.name() == "measurement_mode":
-            self.measurement_mode = self.measurement_modes[param.value()]
-
         if hasattr(self, 'measurement_mode'):
             self.adjust_operation()
             self.adjust_actions()
@@ -261,15 +345,15 @@ class Absorption(CustomExt):
         Acquisition in absorption mode needs a reference (and therefore also
         a background).
         """
-        if self.measurement_mode == RAW:
+        if self.settings['measurement_mode'] == RAW:
             self._actions["acquire"].setEnabled(True)
             self._actions["background"].setEnabled(False)
             self._actions["reference"].setEnabled(False)
-        if self.measurement_mode == WITH_BACKGROUND:
+        if self.settings['measurement_mode'] == WITH_BACKGROUND:
             self._actions["acquire"].setEnabled(self.have_background)
             self._actions["background"].setEnabled(True)
             self._actions["reference"].setEnabled(False)
-        if self.measurement_mode == ABSORPTION:
+        if self.settings['measurement_mode'] == ABSORPTION:
             self._actions["acquire"].setEnabled(self.have_reference)
             self._actions["background"].setEnabled(True)
             self._actions["reference"].setEnabled(self.have_background)
