@@ -1,5 +1,5 @@
 import numpy as np
-from qtpy import QtWidgets
+from qtpy.QtWidgets import QMenuBar, QWidget, QMessageBox
 
 from pymodaq_gui import utils as gutils
 from pymodaq_utils.config import Config, ConfigError, get_set_config_dir
@@ -61,14 +61,15 @@ class Absorption(CustomExt):
     def __init__(self, parent: gutils.DockArea, dashboard):
         self.detector: DAQ_Viewer = None
         super().__init__(parent, dashboard)
+        self.have_background = False
+        self.have_reference = False
+        self.acquisition_mode = 'idle'
+        self.data_valid = False
         self.setup_ui()
         config_dir = get_set_config_dir("gui-state", user=True)
         settings_file_name = f'{config_dir}/{EXTENSION_NAME}.conf'
         self.qt_settings = QSettings(settings_file_name, QSettings.NativeFormat)
         self.read_settings(self.qt_settings)
-        self.acquisition_mode = 'normal'
-        self.have_background = False
-        self.have_reference = False
 
     def setup_docks(self):
         self.create_dashboard_toolbar()
@@ -82,7 +83,7 @@ class Absorption(CustomExt):
         self.docks['spectrum'] = \
             self.dockarea.addDock(spectrum_dock, "right",
                                   self.docks['settings'])
-        spectrum_widget = QtWidgets.QWidget()
+        spectrum_widget = QWidget()
         self.spectrum_viewer = Viewer1D(spectrum_widget)
         self.spectrum_viewer.toolbar.hide()
         spectrum_dock.addWidget(spectrum_widget)
@@ -92,7 +93,7 @@ class Absorption(CustomExt):
         self.docks['raw-data'] = \
             self.dockarea.addDock(raw_data_dock, "bottom",
                                   self.docks['settings'])
-        raw_data_widget = QtWidgets.QWidget()
+        raw_data_widget = QWidget()
         self.raw_data_viewer = Viewer1D(raw_data_widget)
         self.raw_data_viewer.toolbar.hide()
 
@@ -103,7 +104,7 @@ class Absorption(CustomExt):
         self.docks['background'] = \
             self.dockarea.addDock(background_dock, "bottom",
                                   self.docks['raw-data'])
-        background_widget = QtWidgets.QWidget()
+        background_widget = QWidget()
         self.background_viewer = Viewer1D(background_widget)
         background_dock.addWidget(background_widget)
         self.background_viewer.toolbar.hide()
@@ -157,6 +158,9 @@ class Absorption(CustomExt):
         return mean, error
 
     def take_data(self, data: DataToExport):
+        if not self.data_valid:
+            return
+
         spectro_data = data.get_data_from_dim('Data1D')[0]
         self.n_samples = self.accumulate_data(spectro_data[0], self.n_samples)
         if self.n_samples < self.n_average:
@@ -166,20 +170,33 @@ class Absorption(CustomExt):
             self.spectrum_viewer.show_data(spectro_data)
             return
 
-        current_mean, current_error = \
+        mean, error = \
             self.average_data(self.sum_data, self.squares_data,
                               self.n_samples)
         self.n_samples = 0
 
         if self.settings['measurement_mode'] == 'Raw':
-            self.show_data(current_mean, current_error, 'raw')
+            self.show_data(mean, error, 'raw')
             return
 
-        mean_signal = current_mean - self.background
-        error_signal = np.sqrt(current_error**2 + self.error_background**2)
+        if self.acquisition_mode == 'normal':
+            self.take_normal(mean, error)
+        else:
+            self.data_valid = False
+            self.detector.stop_grab()
+            am = self.acquisition_mode
+            self.acquisition_mode = 'idle'
+            if am == 'background':
+                self.take_background(mean, error)
+            else:
+                self.take_reference(mean, error)
+    
+    def take_normal(self, mean, error):
+        mean_signal = mean - self.background
+        error_signal = np.sqrt(error**2 + self.error_background**2)
 
         if self.settings['measurement_mode'] == 'Background Subtracted':
-            self.show_data(mean_signal, error_signal, 'signal', current_mean)
+            self.show_data(mean_signal, error_signal, 'signal', mean)
         else: # self.settings['measurement_mode'] == ABSORPTION:
             valid_mask = \
                 np.logical_and(mean_signal > 0, self.reference_valid_mask)
@@ -188,14 +205,41 @@ class Absorption(CustomExt):
                          -np.log10(mean_signal / self.reference), 0)
             self.error_absorption = \
                 1 / np.log(10) \
-                * np.sqrt((current_error / mean_signal)**2
+                * np.sqrt((error / mean_signal)**2
                           + ((self.error_reference + self.error_background)
                              / self.reference)**2
                           + (1 / mean_signal - 1 / self.reference)**2
                             * self.error_background)
 
             self.show_data(self.absorption, self.error_absorption, 'absorption',
-                           current_mean, self.reference)
+                           mean, self.reference)
+
+    def take_background(self, mean, error):
+        self.background = mean
+        self.error_background = error
+        self.have_background = True
+        dfp = DataFromPlugins(name='Spectrograph',
+                              data=[self.background, self.error_background],
+                              dim='Data1D', labels=['background', 'error'],
+                              axes=[self.x_axis])
+        self.spectrum_viewer.show_data(dfp)
+        self.background_viewer.show_data(dfp)
+        self.dark_shutter.move_abs(1200)
+
+    def take_reference(self, mean, error):
+        self.reference = mean - self.background
+        self.error_reference = error
+        self.reference_valid_mask = self.reference > 0
+        self.have_reference = True
+        dfp = DataFromPlugins(name='Spectrograph',
+                              data=[self.reference, self.error_reference],
+                              dim='Data1D', labels=['reference', 'error'],
+                              axes=[self.x_axis])
+        self.spectrum_viewer.show_data(dfp)
+        self.raw_data_viewer.show_data(dfp)
+        if hasattr(self.detector.controller, 'with_sample'):
+            self.detector.controller.with_sample = True
+        self.adjust_actions()
 
     def show_data(self, mean, error, name, raw=None, reference=None):
         dfp = DataFromPlugins(name=name, data=[mean, error], dim='Data1D',
@@ -240,87 +284,61 @@ class Absorption(CustomExt):
                         "Take Background", checkable=False, toolbar=self.toolbar)
         self.add_action('reference', 'Take Reference', 'lightbulb',
                         "Take Reference", checkable=False, toolbar=self.toolbar)
-        self._actions["stop"].setEnabled(False)
+        self.adjust_actions()
+        
 
     def connect_things(self):
         self.connect_action('acquire', self.start_acquiring)
         self.connect_action('stop', self.stop_acquiring)
         self.connect_action('background', self.start_background)
-        self.connect_action('reference', self.take_reference)
+        self.connect_action('reference', self.start_reference)
 
     def start_acquiring(self):
         self.n_samples = 0
+        self.data_valid = True
+        self.acquisition_mode = 'normal'
+        self.adjust_actions()
         self.n_average = self.settings.child('device_params')['averaging']
-        self._actions["acquire"].setEnabled(False)
-        self._actions["stop"].setEnabled(True)
         self.detector.grab()
 
     def stop_acquiring(self):
-        self._actions["acquire"].setEnabled(True)
-        self._actions["stop"].setEnabled(False)
+        self.data_valid = False
         self.detector.stop_grab()
+        self.acquisition_mode = 'idle'
+        self.adjust_actions()
 
     def start_background(self):
+        self.data_valid = False
         self.acquisition_mode = 'background'
-        #self.adjust_actions()
+        self.n_average = self.settings['back_averaging']
+        self.n_samples = 0
+        self.adjust_actions()
         self.dark_shutter.move_abs(0)
 
+    def start_reference(self):
+        result = \
+            QMessageBox.question(None, "Reference", "Insert a blank sample",
+                                 QMessageBox.StandardButton.Ok
+                                 | QMessageBox.StandardButton.Cancel)
+        if result != QMessageBox.Ok:
+            return
+        if hasattr(self.detector.controller, 'with_sample'):
+            self.detector.controller.with_sample = False
+        self.acquisition_mode = 'reference'
+        self.n_average = self.settings['ref_averaging']
+        self.n_samples = 0
+        self.data_valid = True
+        self.adjust_actions()
+        self.detector.grab()
+
     def shutter_ready(self):
+        self.data_valid = True
         if self.acquisition_mode == 'background':
-            self.take_background()
-        else:
+            self.detector.grab()
+        else: # idle mode
             self.adjust_actions()
 
-    def take_background(self):
-        self.n_back = self.settings.child('back_averaging').value()
-        for i in range(0, self.n_back):
-            background,timestamp = self.detector.controller.grab_spectrum()
-            self.accumulate_data(background, i)
-        self.background, self.error_background = \
-            self.average_data(self.sum_data, self.squares_data, self.n_back)
-        self.have_background = True
-        self.adjust_actions()
-# temp, move this to take data, recover wl from plugin data
-        dfp = DataFromPlugins(name='Spectrograph',
-                              data=[self.background, self.error_background],
-                              dim='Data1D', labels=['background', 'error'],
-                              axes=[self.x_axis])
-        self.spectrum_viewer.show_data(dfp)
-        self.background_viewer.show_data(dfp)
-        self.acquistion_mode = 'normal'
-        self.dark_shutter.move_abs(1200)
-
-    def take_reference(self):
-        """Grab one reference spectrum."""
-
-        self.detector.controller.with_sample = False
-
-        self.n_ref = self.settings.child('ref_averaging').value()
-
-        for i in range(0, self.n_back):
-            reference,timestamp = self.detector.controller.grab_spectrum()
-            self.accumulate_data(reference, i)
-        self.reference, self.error_reference = \
-            self.average_data(self.sum_data, self.squares_data, self.n_ref)
-        self.reference -= self.background
-
-        self.reference_valid_mask = self.reference > 0
-        self.have_reference = True
-        self.adjust_actions()
-        dfp = DataFromPlugins(name='Spectrograph',
-                              data=[self.reference, self.error_reference],
-                              dim='Data1D', labels=['reference', 'error'],
-                              axes=[self.x_axis])
-        self.spectrum_viewer.show_data(dfp)
-        dfp = DataFromPlugins(name='Spectrograph',
-                              data=[self.reference, self.error_reference],
-                              dim='Data1D', labels=['reference', 'error'],
-                              axes=[self.x_axis])
-        self.raw_data_viewer.show_data(dfp)
-
-        self.detector.controller.with_sample = True
-
-    def setup_menu(self, menubar: QtWidgets.QMenuBar = None):
+    def setup_menu(self, menubar: QMenuBar = None):
         return
         file_menu = self.mainwindow.menuBar().addMenu('File')
         self.affect_to('save', file_menu)
@@ -333,40 +351,34 @@ class Absorption(CustomExt):
                                          'integration_time') \
                                   .setValue(param.value())
             # background and reference should be measurement with the same i.t.
-            if self.settings['measurement_mode'] \
-               in ['Background Subtracted', 'Absorption']:
+            if self.settings['measurement_mode'] != 'Raw':
                 self.detector.stop()
             self.have_background = False
             self.have_reference = False
-        elif param.name() == "averaging":
-            self.average = param.value()
-        elif param.name() == "pymo_averaging":
-            self.detector.settings.child('main_settings', 'Naverage') \
-                                         .setValue(param.value())
-        elif param.name() == "back_averaging":
-            self.background_average = param.value()
-        if hasattr(self, 'measurement_mode'):
-            self.adjust_operation()
-            self.adjust_actions()
+        self.adjust_actions()
 
     def adjust_actions(self):
-        """Disable actions which need other actions to be performed first.
-        A reference can only be taken when a background has been measured.
-        Acquisition in absorption mode needs a reference (and therefore also
-        a background).
-        """
-        if self.settings['measurement_mode'] == 'Raw':
-            self._actions["acquire"].setEnabled(True)
+        if self.acquisition_mode == 'idle':
+            self.docks['settings'].setEnabled(True)
+            self._actions["stop"].setEnabled(False)
+            if self.settings['measurement_mode'] == 'Raw':
+                self._actions["acquire"].setEnabled(True)
+                self._actions["background"].setEnabled(False)
+                self._actions["reference"].setEnabled(False)
+            if self.settings['measurement_mode'] == 'Background Subtracted':
+                self._actions["acquire"].setEnabled(self.have_background)
+                self._actions["background"].setEnabled(True)
+                self._actions["reference"].setEnabled(False)
+            if self.settings['measurement_mode'] == 'Absorption':
+                self._actions["acquire"].setEnabled(self.have_reference)
+                self._actions["background"].setEnabled(True)
+                self._actions["reference"].setEnabled(self.have_background)
+        else:
+            self.docks['settings'].setEnabled(False)
+            self._actions["stop"].setEnabled(True)
+            self._actions["acquire"].setEnabled(False)
             self._actions["background"].setEnabled(False)
             self._actions["reference"].setEnabled(False)
-        if self.settings['measurement_mode'] == 'Background Subtracted':
-            self._actions["acquire"].setEnabled(self.have_background)
-            self._actions["background"].setEnabled(True)
-            self._actions["reference"].setEnabled(False)
-        if self.settings['measurement_mode'] == 'Absorption':
-            self._actions["acquire"].setEnabled(self.have_reference)
-            self._actions["background"].setEnabled(True)
-            self._actions["reference"].setEnabled(self.have_background)
 
 
 def main():
