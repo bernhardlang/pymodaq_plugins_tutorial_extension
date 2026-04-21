@@ -66,6 +66,9 @@ class Absorption(CustomExt):
         settings_file_name = f'{config_dir}/{EXTENSION_NAME}.conf'
         self.qt_settings = QSettings(settings_file_name, QSettings.NativeFormat)
         self.read_settings(self.qt_settings)
+        self.acquisition_mode = 'normal'
+        self.have_background = False
+        self.have_reference = False
 
     def setup_docks(self):
         self.create_dashboard_toolbar()
@@ -105,8 +108,9 @@ class Absorption(CustomExt):
         background_dock.addWidget(background_widget)
         self.background_viewer.toolbar.hide()
 
+        # @PyMoDAQxperts: is there a better better way of handling settings
+        # storage?
     def read_settings(self, qt_settings):
-        # @PyMoDAQxperts: is there a better better way of doing?
         geometry = qt_settings.value("geometry", QByteArray())
         self.mainwindow.restoreGeometry(geometry)
         state = qt_settings.value("dockarea", None)
@@ -206,7 +210,6 @@ class Absorption(CustomExt):
             dfp = DataFromPlugins(name='raw', data=data, dim='Data1D',
                                   labels=labels, axes=[self.x_axis])
             self.raw_data_viewer.show_data(dfp)
-        self.show_data(mean, error, 'raw')
 
     def do_things_after_preset_set(self, preset_name: str):
         self.modules_manager.actuators_all = \
@@ -223,6 +226,11 @@ class Absorption(CustomExt):
             Axis(label='Wavelength', units='nm',
                  data=self.detector.controller.wavelengths, index=0)
 
+        self.dark_shutter = \
+            self.modules_manager.get_mod_from_name('dark-shutter',
+                                                    ModuleType.Actuator)
+        self.dark_shutter.move_done_signal.connect(self.shutter_ready)
+
     def setup_actions(self):
         self.add_action('acquire', 'Acquire', 'run2',
                         "Acquire", checkable=False, toolbar=self.toolbar)
@@ -237,7 +245,7 @@ class Absorption(CustomExt):
     def connect_things(self):
         self.connect_action('acquire', self.start_acquiring)
         self.connect_action('stop', self.stop_acquiring)
-        self.connect_action('background', self.take_background)
+        self.connect_action('background', self.start_background)
         self.connect_action('reference', self.take_reference)
 
     def start_acquiring(self):
@@ -252,12 +260,18 @@ class Absorption(CustomExt):
         self._actions["stop"].setEnabled(False)
         self.detector.stop_grab()
 
+    def start_background(self):
+        self.acquisition_mode = 'background'
+        #self.adjust_actions()
+        self.dark_shutter.move_abs(0)
+
+    def shutter_ready(self):
+        if self.acquisition_mode == 'background':
+            self.take_background()
+        else:
+            self.adjust_actions()
+
     def take_background(self):
-        """Grab one background spectrum."""
-
-        if hasattr(self.detector.controller, "set_shutter_value"):
-            self.detector.controller.set_shutter_value('dark', 0)
-
         self.n_back = self.settings.child('back_averaging').value()
         for i in range(0, self.n_back):
             background,timestamp = self.detector.controller.grab_spectrum()
@@ -273,8 +287,8 @@ class Absorption(CustomExt):
                               axes=[self.x_axis])
         self.spectrum_viewer.show_data(dfp)
         self.background_viewer.show_data(dfp)
-        if hasattr(self.detector.controller, "set_shutter_value"):
-            self.detector.controller.set_shutter_value('dark', 1200)
+        self.acquistion_mode = 'normal'
+        self.dark_shutter.move_abs(1200)
 
     def take_reference(self):
         """Grab one reference spectrum."""
@@ -319,7 +333,8 @@ class Absorption(CustomExt):
                                          'integration_time') \
                                   .setValue(param.value())
             # background and reference should be measurement with the same i.t.
-            if self.settings['measurement_mode'] in [WITH_BACKGROUND, ABSORPTION]:
+            if self.settings['measurement_mode'] \
+               in ['Background Subtracted', 'Absorption']:
                 self.detector.stop()
             self.have_background = False
             self.have_reference = False
@@ -340,15 +355,15 @@ class Absorption(CustomExt):
         Acquisition in absorption mode needs a reference (and therefore also
         a background).
         """
-        if self.settings['measurement_mode'] == RAW:
+        if self.settings['measurement_mode'] == 'Raw':
             self._actions["acquire"].setEnabled(True)
             self._actions["background"].setEnabled(False)
             self._actions["reference"].setEnabled(False)
-        if self.settings['measurement_mode'] == WITH_BACKGROUND:
+        if self.settings['measurement_mode'] == 'Background Subtracted':
             self._actions["acquire"].setEnabled(self.have_background)
             self._actions["background"].setEnabled(True)
             self._actions["reference"].setEnabled(False)
-        if self.settings['measurement_mode'] == ABSORPTION:
+        if self.settings['measurement_mode'] == 'Absorption':
             self._actions["acquire"].setEnabled(self.have_reference)
             self._actions["background"].setEnabled(True)
             self._actions["reference"].setEnabled(self.have_background)
@@ -359,7 +374,7 @@ def main():
     from pymodaq.dashboard import load_dashboard_with_preset
     from pymodaq.utils.messenger import messagebox
 
-    from qtpy.QtCore import removeInputHook
+    #from qtpy.QtCore import removeInputHook
 
     app = mkQApp(EXTENSION_NAME)
     try:
