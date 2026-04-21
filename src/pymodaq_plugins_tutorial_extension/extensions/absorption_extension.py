@@ -190,7 +190,7 @@ class Absorption(CustomExt):
                 self.take_background(mean, error)
             else:
                 self.take_reference(mean, error)
-    
+
     def take_normal(self, mean, error):
         mean_signal = mean - self.background
         error_signal = np.sqrt(error**2 + self.error_background**2)
@@ -358,27 +358,23 @@ class Absorption(CustomExt):
         self.adjust_actions()
 
     def adjust_actions(self):
-        if self.acquisition_mode == 'idle':
-            self.docks['settings'].setEnabled(True)
-            self._actions["stop"].setEnabled(False)
-            if self.settings['measurement_mode'] == 'Raw':
-                self._actions["acquire"].setEnabled(True)
-                self._actions["background"].setEnabled(False)
-                self._actions["reference"].setEnabled(False)
-            if self.settings['measurement_mode'] == 'Background Subtracted':
-                self._actions["acquire"].setEnabled(self.have_background)
-                self._actions["background"].setEnabled(True)
-                self._actions["reference"].setEnabled(False)
-            if self.settings['measurement_mode'] == 'Absorption':
-                self._actions["acquire"].setEnabled(self.have_reference)
-                self._actions["background"].setEnabled(True)
-                self._actions["reference"].setEnabled(self.have_background)
-        else:
-            self.docks['settings'].setEnabled(False)
-            self._actions["stop"].setEnabled(True)
-            self._actions["acquire"].setEnabled(False)
-            self._actions["background"].setEnabled(False)
-            self._actions["reference"].setEnabled(False)
+
+        def get_states(state):
+            """acquire, back, ref"""
+            if state == 'Raw':
+                return [True, False, False]
+            if state == 'Background Subtracted':
+                return [self.have_background, True, False]
+            if state == 'Absorption':
+                return [ self.have_reference, True, self.have_background]
+            return [False, False, False] # busy
+
+        is_idle = self.acquisition_mode == 'idle'
+        self.docks['settings'].setEnabled(is_idle)
+        self._actions["stop"].setEnabled(not is_idle)
+        states = get_states(self.settings['measurement_mode'] if is_idle else '')
+        for name,state in zip(["acquire", "background", "reference"], states):
+            self._actions[name].setEnabled(state)
 
 
 def main():
