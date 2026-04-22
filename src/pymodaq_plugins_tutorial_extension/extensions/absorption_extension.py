@@ -1,5 +1,7 @@
+from os import path
 import numpy as np
-from qtpy.QtWidgets import QMenuBar, QWidget, QMessageBox
+import csv
+from qtpy.QtWidgets import QMenuBar, QWidget, QMessageBox, QFileDialog
 
 from pymodaq_gui import utils as gutils
 from pymodaq_utils.config import Config, ConfigError, get_set_config_dir
@@ -170,45 +172,45 @@ class Absorption(CustomExt):
             self.spectrum_viewer.show_data(spectro_data)
             return
 
-        mean, error = \
+        self.mean_current, self.error_current = \
             self.average_data(self.sum_data, self.squares_data,
                               self.n_samples)
         self.n_samples = 0
 
         if self.settings['measurement_mode'] == 'Raw':
-            self.show_data(mean, error, 'raw')
+            self.show_data(self.mean_current, self.error_current, 'raw')
             return
 
         if self.acquisition_mode == 'normal':
-            self.take_normal(mean, error)
+            self.take_normal(self.mean_current, self.error_current)
         else:
             self.data_valid = False
             self.detector.stop_grab()
             am = self.acquisition_mode
             self.acquisition_mode = 'idle'
             if am == 'background':
-                self.take_background(mean, error)
+                self.take_background(self.mean_current, self.error_current)
             else:
-                self.take_reference(mean, error)
+                self.take_reference(self.mean_current, self.error_current)
 
     def take_normal(self, mean, error):
-        mean_signal = mean - self.background
-        error_signal = np.sqrt(error**2 + self.error_background**2)
+        self.mean_signal = mean - self.background
 
         if self.settings['measurement_mode'] == 'Background Subtracted':
-            self.show_data(mean_signal, error_signal, 'signal', mean)
+            self.error_signal = np.sqrt(error**2 + self.error_background**2)
+            self.show_data(mean, error, 'signal', mean)
         else: # self.settings['measurement_mode'] == ABSORPTION:
             valid_mask = \
-                np.logical_and(mean_signal > 0, self.reference_valid_mask)
+                np.logical_and(mean > 0, self.reference_valid_mask)
             self.absorption = \
                 np.where(valid_mask,
-                         -np.log10(mean_signal / self.reference), 0)
+                         -np.log10(mean / self.reference), 0)
             self.error_absorption = \
                 1 / np.log(10) \
-                * np.sqrt((error / mean_signal)**2
+                * np.sqrt((error / mean)**2
                           + ((self.error_reference + self.error_background)
                              / self.reference)**2
-                          + (1 / mean_signal - 1 / self.reference)**2
+                          + (1 / mean - 1 / self.reference)**2
                             * self.error_background)
 
             self.show_data(self.absorption, self.error_absorption, 'absorption',
@@ -284,14 +286,16 @@ class Absorption(CustomExt):
                         "Take Background", checkable=False, toolbar=self.toolbar)
         self.add_action('reference', 'Take Reference', 'lightbulb',
                         "Take Reference", checkable=False, toolbar=self.toolbar)
+        self.add_action('save', 'Save Current', '',
+                        "Save Current", checkable=False, toolbar=self.toolbar)
         self.adjust_actions()
-        
 
     def connect_things(self):
         self.connect_action('acquire', self.start_acquiring)
         self.connect_action('stop', self.stop_acquiring)
         self.connect_action('background', self.start_background)
         self.connect_action('reference', self.start_reference)
+        self.connect_action('save', self.save_current_data)
 
     def start_acquiring(self):
         self.n_samples = 0
@@ -338,13 +342,6 @@ class Absorption(CustomExt):
         else: # idle mode
             self.adjust_actions()
 
-    def setup_menu(self, menubar: QMenuBar = None):
-        return
-        file_menu = self.mainwindow.menuBar().addMenu('File')
-        self.affect_to('save', file_menu)
-        file_menu.addSeparator()
-        #self.affect_to('quit', file_menu)
-
     def value_changed(self, param):
         if param.name() == "integration_time":
             self.detector.settings.child('detector_settings',
@@ -359,22 +356,80 @@ class Absorption(CustomExt):
 
     def adjust_actions(self):
 
-        def get_states(state):
-            """acquire, back, ref"""
-            if state == 'Raw':
-                return [True, False, False]
-            if state == 'Background Subtracted':
-                return [self.have_background, True, False]
-            if state == 'Absorption':
-                return [ self.have_reference, True, self.have_background]
-            return [False, False, False] # busy
+        # acquire, back, ref
+        action_states = {
+            'Raw': [True, False, False],
+            'Background Subtracted': [self.have_background, True, False],
+            'Absorption': [ self.have_reference, True, self.have_background],
+            'Busy': [False, False, False]
+            }
 
         is_idle = self.acquisition_mode == 'idle'
+        mode = self.settings['measurement_mode'] if is_idle else 'Busy'
+
         self.docks['settings'].setEnabled(is_idle)
         self._actions["stop"].setEnabled(not is_idle)
-        states = get_states(self.settings['measurement_mode'] if is_idle else '')
-        for name,state in zip(["acquire", "background", "reference"], states):
+        for name,state in zip(["acquire", "background", "reference"],
+                              action_states[mode]):
             self._actions[name].setEnabled(state)
+
+    def save_current_data(self):
+        """Save dat currently displayed on the main plot."""
+        directory = self.qt_settings.value('data-dir', None)
+        if directory is None:
+            directory = "."
+        result = QFileDialog.getSaveFileName(caption="Save Data", dir=directory,
+                                             filter="*.csv")
+        if result is None or not len(result[0]):
+            return
+
+        self.qt_settings.setValue('data-dir', path.dirname(result[0]))
+
+        wavelengths = self.detector.controller.wavelengths
+        with open(result[0], "wt") as csv_file:
+            writer = csv.writer(csv_file, delimiter=',',
+                                quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            if self.settings['measurement_mode'] == 'Raw' \
+               or not self.have_background:
+                writer.writerow(['wavelength', 'raw data', 'error'])
+                for i,wl in enumerate(wavelengths):
+                    writer.writerow(['%.1f' % wl, '%.3f' % self.mean_current[i],
+                                    '%.3f' % self.error_current[i]])
+                return
+
+            if self.settings['measurement_mode']== 'Background Subtracted' \
+               or not self.have_reference:
+                writer.writerow(['wavelength', 'raw data', 'error raw',
+                                 'background', 'error background',
+                                 'background subtracted', 'error'])
+                for i,wl in enumerate(wavelengths):
+                    writer.writerow(['%.1f' % wl, '%.3f' % self.mean_current[i],
+                                     '%.1f' % self.error_current[i],
+                                     '%.1f' % self.background[i],
+                                     '%.1f' % self.error_background[i],
+                                     '%.1f' % self.mean_signal[i],
+                                     '%.1f' % self.error_signal[i]])
+                return
+
+            # self.settings['measurement_mode'] == 'Absorption'
+            writer.writerow(['wavelength', 'raw data', 'error raw', 'background',
+                             'error background', 'reference', 'error reference',
+                             'absorption', 'error'])
+            for i,wl in enumerate(wavelengths):
+                writer.writerow(['%.1f' % wl, '%.3f' % self.mean_current[i],
+                                 '%.3f' % self.error_current[i],
+                                 '%.3f' % self.background[i],
+                                 '%.3f' % self.error_background[i],
+                                 '%.3f' % self.reference[i],
+                                 '%.3f' % self.error_reference[i],
+                                 '%.6f' % self.absorption[i],
+                                 '%.6f' % self.error_absorption[i]])
+
+    def setup_menu(self, menubar: QMenuBar = None):
+        file_menu = self.mainwindow.menuBar().addMenu('File')
+        self.affect_to('save', file_menu)
+
+        file_menu.addSeparator()
 
 
 def main():
