@@ -7,7 +7,7 @@ from pymodaq_gui import utils as gutils
 from pymodaq_utils.config import Config, ConfigError, get_set_config_dir
 from pymodaq_utils.logger import set_logger, get_module_name
 
-from pymodaq.utils.config import get_set_preset_path
+from pymodaq.utils.config import get_set_experiment_path
 from pymodaq.extensions.custom_ext import CustomExt
 
 from pymodaq.utils.managers.modules.utils import ModuleType
@@ -198,23 +198,23 @@ class Absorption(CustomExt):
 
         if self.settings['measurement_mode'] == 'Background Subtracted':
             self.error_signal = np.sqrt(error**2 + self.error_background**2)
-            self.show_data(mean, error, 'signal', mean)
+            self.show_data(self.mean_signal, error, 'signal', self.mean_signal)
         else: # self.settings['measurement_mode'] == ABSORPTION:
             valid_mask = \
-                np.logical_and(mean > 0, self.reference_valid_mask)
+                np.logical_and(self.mean_signal > 0, self.reference_valid_mask)
             self.absorption = \
                 np.where(valid_mask,
-                         -np.log10(mean / self.reference), 0)
+                         -np.log10(self.mean_signal / self.reference), 0)
             self.error_absorption = \
                 1 / np.log(10) \
-                * np.sqrt((error / mean)**2
+                * np.sqrt((error / self.mean_signal)**2
                           + ((self.error_reference + self.error_background)
                              / self.reference)**2
-                          + (1 / mean - 1 / self.reference)**2
+                          + (1 / self.mean_signal - 1 / self.reference)**2
                             * self.error_background)
 
             self.show_data(self.absorption, self.error_absorption, 'absorption',
-                           mean, self.reference)
+                           self.mean_signal, self.reference)
 
     def take_background(self, mean, error):
         self.background = mean
@@ -239,8 +239,10 @@ class Absorption(CustomExt):
                               axes=[self.x_axis])
         self.spectrum_viewer.show_data(dfp)
         self.raw_data_viewer.show_data(dfp)
-        if hasattr(self.detector.controller, 'with_sample'):
+        try:
             self.detector.controller.with_sample = True
+        except:
+            pass
         self.adjust_actions()
 
     def show_data(self, mean, error, name, raw=None, reference=None):
@@ -257,7 +259,7 @@ class Absorption(CustomExt):
                                   labels=labels, axes=[self.x_axis])
             self.raw_data_viewer.show_data(dfp)
 
-    def do_things_after_preset_set(self, preset_name: str):
+    def do_things_after_experiment_set(self, experiment_name: str):
         self.modules_manager.actuators_all = \
             self.dashboard.modules_manager.actuators_all
         self.modules_manager.detectors_all = \
@@ -326,8 +328,10 @@ class Absorption(CustomExt):
                                  | QMessageBox.StandardButton.Cancel)
         if result != QMessageBox.Ok:
             return
-        if hasattr(self.detector.controller, 'with_sample'):
+        try:
             self.detector.controller.with_sample = False
+        except:
+            pass
         self.acquisition_mode = 'reference'
         self.n_average = self.settings['ref_averaging']
         self.n_samples = 0
@@ -427,29 +431,30 @@ class Absorption(CustomExt):
 
     def setup_menu(self, menubar: QMenuBar = None):
         file_menu = self.mainwindow.menuBar().addMenu('File')
-        self.affect_to('save', file_menu)
+        # broken in dev, setup_actions is called after setup_menu
+        # self.affect_to('save', file_menu)
 
         file_menu.addSeparator()
 
 
 def main():
     from pymodaq_gui.utils.utils import mkQApp
-    from pymodaq.dashboard import load_dashboard_with_preset
+    from pymodaq.dashboard import load_dashboard_with_experiment
     from pymodaq.utils.messenger import messagebox
 
     #from qtpy.QtCore import removeInputHook
 
     app = mkQApp(EXTENSION_NAME)
     try:
-        preset_file_name = plugin_config('presets', f'preset_for_{CLASS_NAME.lower()}')
-        load_dashboard_with_preset(preset_file_name, EXTENSION_NAME)
+        experiment_file_name = plugin_config('experiments', f'experiment_for_{CLASS_NAME.lower()}')
+        load_dashboard_with_experiment(experiment_file_name, EXTENSION_NAME)
         app.exec()
 
     except ConfigError as e:
-        messagebox(f'No entry with name f"preset_for_{CLASS_NAME.lower()}" has been configured'
+        messagebox(f'No entry with name f"experiment_for_{CLASS_NAME.lower()}" has been configured'
                    f'in the plugin config file. The toml entry should be:\n'
-                   f'[presets]'
-                   f"preset_for_{CLASS_NAME.lower()} = {'a name for an existing preset'}"
+                   f'[experiments]'
+                   f"experiment_for_{CLASS_NAME.lower()} = {'a name for an existing experiment'}"
                    )
 
 
