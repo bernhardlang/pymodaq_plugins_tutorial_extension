@@ -73,7 +73,7 @@ class Absorption(CustomExt):
         self.qt_settings = QSettings(settings_file_name, QSettings.NativeFormat)
         self.read_settings(self.qt_settings)
 
-    def setup_docks(self):
+    def setup_docks_and_widgets(self):
         self.create_dashboard_toolbar()
 
         self.docks['settings'] = Dock('Application Settings')
