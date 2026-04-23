@@ -144,6 +144,58 @@ class Absorption(CustomExt):
     def quit_fun(self):
         self.write_settings(self.qt_settings)
 
+    def do_things_after_experiment_set(self, experiment_name: str):
+        self.modules_manager.actuators_all = \
+            self.dashboard.modules_manager.actuators_all
+        self.modules_manager.detectors_all = \
+            self.dashboard.modules_manager.detectors_all
+
+        self.detector = \
+            self.modules_manager.get_mod_from_name('Spectrometer',
+                                                   ModuleType.Detector)
+        self.detector.grab_done_signal.connect(self.take_data)
+        # ok here?
+        self.x_axis = \
+            Axis(label='Wavelength', units='nm',
+                 data=self.detector.controller.wavelengths, index=0)
+
+        self.dark_shutter = \
+            self.modules_manager.get_mod_from_name('dark-shutter',
+                                                    ModuleType.Actuator)
+        self.dark_shutter.move_done_signal.connect(self.shutter_ready)
+
+    def setup_actions(self):
+        self.add_action('acquire', 'Acquire', 'run2',
+                        "Acquire", checkable=False, toolbar=self.toolbar)
+        self.add_action('stop', 'Stop', 'stop2',
+                        "Stop", checkable=False, toolbar=self.toolbar)
+        self.add_action('background', 'Take Background', 'brightness_3',
+                        "Take Background", checkable=False, toolbar=self.toolbar)
+        self.add_action('reference', 'Take Reference', 'lightbulb',
+                        "Take Reference", checkable=False, toolbar=self.toolbar)
+        self.add_action('save', 'Save Current', '',
+                        "Save Current", checkable=False, toolbar=self.toolbar)
+        self.adjust_actions()
+
+    def connect_things(self):
+        self.connect_action('acquire', self.start_acquiring)
+        self.connect_action('stop', self.stop_acquiring)
+        self.connect_action('background', self.start_background)
+        self.connect_action('reference', self.start_reference)
+        self.connect_action('save', self.save_current_data)
+
+    def value_changed(self, param):
+        if param.name() == "integration_time":
+            self.detector.settings.child('detector_settings',
+                                         'integration_time') \
+                                  .setValue(param.value())
+            # background and reference should be measurement with the same i.t.
+            if self.settings['measurement_mode'] != 'Raw':
+                self.detector.stop()
+            self.have_background = False
+            self.have_reference = False
+        self.adjust_actions()
+
     def accumulate_data(self, data, n_samples):
         if n_samples:
             self.sum_data += data
@@ -259,46 +311,6 @@ class Absorption(CustomExt):
                                   labels=labels, axes=[self.x_axis])
             self.raw_data_viewer.show_data(dfp)
 
-    def do_things_after_experiment_set(self, experiment_name: str):
-        self.modules_manager.actuators_all = \
-            self.dashboard.modules_manager.actuators_all
-        self.modules_manager.detectors_all = \
-            self.dashboard.modules_manager.detectors_all
-
-        self.detector = \
-            self.modules_manager.get_mod_from_name('Spectrometer',
-                                                   ModuleType.Detector)
-        self.detector.grab_done_signal.connect(self.take_data)
-        # ok here?
-        self.x_axis = \
-            Axis(label='Wavelength', units='nm',
-                 data=self.detector.controller.wavelengths, index=0)
-
-        self.dark_shutter = \
-            self.modules_manager.get_mod_from_name('dark-shutter',
-                                                    ModuleType.Actuator)
-        self.dark_shutter.move_done_signal.connect(self.shutter_ready)
-
-    def setup_actions(self):
-        self.add_action('acquire', 'Acquire', 'run2',
-                        "Acquire", checkable=False, toolbar=self.toolbar)
-        self.add_action('stop', 'Stop', 'stop2',
-                        "Stop", checkable=False, toolbar=self.toolbar)
-        self.add_action('background', 'Take Background', 'brightness_3',
-                        "Take Background", checkable=False, toolbar=self.toolbar)
-        self.add_action('reference', 'Take Reference', 'lightbulb',
-                        "Take Reference", checkable=False, toolbar=self.toolbar)
-        self.add_action('save', 'Save Current', '',
-                        "Save Current", checkable=False, toolbar=self.toolbar)
-        self.adjust_actions()
-
-    def connect_things(self):
-        self.connect_action('acquire', self.start_acquiring)
-        self.connect_action('stop', self.stop_acquiring)
-        self.connect_action('background', self.start_background)
-        self.connect_action('reference', self.start_reference)
-        self.connect_action('save', self.save_current_data)
-
     def start_acquiring(self):
         self.n_samples = 0
         self.data_valid = True
@@ -345,18 +357,6 @@ class Absorption(CustomExt):
             self.detector.grab()
         else: # idle mode
             self.adjust_actions()
-
-    def value_changed(self, param):
-        if param.name() == "integration_time":
-            self.detector.settings.child('detector_settings',
-                                         'integration_time') \
-                                  .setValue(param.value())
-            # background and reference should be measurement with the same i.t.
-            if self.settings['measurement_mode'] != 'Raw':
-                self.detector.stop()
-            self.have_background = False
-            self.have_reference = False
-        self.adjust_actions()
 
     def adjust_actions(self):
 
@@ -441,8 +441,6 @@ def main():
     from pymodaq_gui.utils.utils import mkQApp
     from pymodaq.dashboard import load_dashboard_with_experiment
     from pymodaq.utils.messenger import messagebox
-
-    #from qtpy.QtCore import removeInputHook
 
     app = mkQApp(EXTENSION_NAME)
     try:
