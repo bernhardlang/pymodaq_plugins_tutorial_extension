@@ -1,16 +1,16 @@
-[features]  # defines the plugin features contained into this plugin
-instruments = true  # true if plugin contains instrument classes (else false, notice the lowercase for toml files)
+[features]
+instruments = true
 extensions = false  # true if plugins contains dashboard extensions
 models = false  # true if plugins contains pid models
 h5exporters = false  # true if plugin contains custom h5 file exporters
 scanners = false  # true if plugin contains custom scan layout (daq_scan extensions)
 
 [urls]
-package-url = 'https://github.com/PyMoDAQ/pymodaq_plugins_template' #todo modify url by your plugin url
+package-url = 'https://github.com:bernhardlang/pymodaq_plugins_tutorial_extension'
 
 [project]
-name = "pymodaq_plugins_template" #todo modify template by your plugin short name
-description = 'some word about your plugin'
+name = "pymodaq_plugins_tutorial_extension"
+description = 'code for PyMoDAQ extension tutorial'
 dependencies = [
     "pymodaq>=5.2.0",
     "pymodaq_utils>=5.2.0",
@@ -20,11 +20,11 @@ dependencies = [
 ]
 
 authors = [
-    {name = "Name Surname", email = "myname@test.fr"},
+    {name = "Bernhard Lang", email = "bernhard.lang@unige.ch"},
     #todo: list here all authors of your plugin
 ]
 maintainers = [
-    {name = "Name Surname", email = "myname@test.fr"},
+    {name = "Bernhard Lang", email = "bernhard.lang@unige.ch"},
     #todo: list here all maintainers of your plugin
 ]
 
