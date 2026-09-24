@@ -22,18 +22,19 @@ CLASS_NAME = 'AbsorptionExtension'
 
 class AbsorptionExtension(CustomExt):
 
+    device_params = [
+        {'name': 'integration_time', 'title': 'Integration Time [ms]',
+         'type': 'float', 'min': 0.001, 'max': 10000, 'value': 50,
+         'tip': 'Integration time in seconds'},
+        {'name': 'averaging', 'title': 'Averaging',
+         'type': 'int', 'min': 1, 'max': 1000, 'value': 10,
+         'tip': 'Software Averaging'},
+        ]
+
     params = [
         {'name': 'device_params', 'title': 'Device parameters', 'type': 'group',
-         'children': [
-             {'name': 'integration_time', 'title': 'Integration Time [ms]',
-              'type': 'float', 'min': 0.001, 'max': 10000, 'value': 50,
-              'tip': 'Integration time in seconds'},
-             {'name': 'averaging', 'title': 'Averaging',
-              'type': 'int', 'min': 1, 'max': 1000, 'value': 10,
-              'tip': 'Software Averaging'},
-           ]
-         },
-       ]
+         'children': device_params },
+        ]
 
     def __init__(self, parent: gutils.DockArea, dashboard):
         super().__init__(parent, dashboard)
@@ -115,6 +116,10 @@ class AbsorptionExtension(CustomExt):
     def write_settings(self, qt_settings):
          qt_settings.setValue("geometry", self.mainwindow.saveGeometry())
          qt_settings.setValue("dockarea", self.dockarea.saveState())
+         for param in self.device_params:
+             qt_settings.setValue(param['name'],
+                                  self.settings.child('device_params') \
+                                  [param['name']])
 
     def read_settings(self, qt_settings):
          geometry = self.qt_settings.value("geometry", QByteArray())
@@ -126,6 +131,9 @@ class AbsorptionExtension(CustomExt):
              except: # pyqtgraph's state restoring is not very fail safe
                  # erase inconsistent settings in case pyqtgraph trips
                  self.qt_settings.setValue("dockarea", None)
+         for param in self.device_params:
+             self.settings.child('device_params')[param['name']] = \
+                 qt_settings.value(param['name'], param['value'])
 
     def take_data(self, data: DataToExport):
         spectro_data = data.get_data_from_dim('Data1D')[0]
