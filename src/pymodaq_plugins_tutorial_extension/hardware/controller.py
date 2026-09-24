@@ -37,6 +37,8 @@ class MockSpectrograph:
         if shutter_open:
             light = self.spectrum * self.light_level * self.integration_time \
                 * self.pe_per_lsb
+            if sample:
+                light *= np.pow(10, -self.absorption)
             data += np.random.poisson(light) / self.pe_per_lsb
 
         max_adc = (1 << self.adc_bits) - 1
@@ -65,4 +67,16 @@ if __name__ == '__main__':
     reference = data - dark
     plt.plot(reference)
     plt.legend(['raw', 'dark subtracted'])
+    plt.show()
+
+    data, time_stamp = \
+        spectrograph.simulate_spectrum(shutter_open=True, sample=True)
+    plt.plot(data)
+    signal = data - dark
+    plt.plot(data - dark)
+    plt.legend(['raw through sample', 'dark subtracted'])
+    plt.show()
+
+    plt.plot(-np.log10(signal / reference))
+    plt.title('absorption')
     plt.show()
