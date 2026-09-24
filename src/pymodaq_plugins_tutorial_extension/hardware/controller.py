@@ -3,6 +3,33 @@ import numpy as np
 from dataclasses import dataclass
 
 
+class MockActuator:
+
+    def __init__(self, current=0):
+        self._target_value = current
+        self._current_value = current
+
+    def move_at(self, value):
+        self._target_value = value
+        self._current_value = value
+
+    def get_value(self):
+        return self._current_value
+
+
+class MockShutter(MockActuator):
+
+    def __init__(self, current=0):
+        MockActuator.__init__(self, current)
+        self.open_value = 1200
+        self.closed_value = 1800
+        self.epsilon = 10
+
+    @property
+    def is_closed(self):
+        return abs(self._current_value - self.closed_value) <= self.epsilon
+
+
 @dataclass
 class MockSpectrograph:
 
@@ -16,10 +43,13 @@ class MockSpectrograph:
     wl_from: float = 300
     wl_to: float = 900
     absorption: float = 0.3
+    shutter_names = ['dark']
 
     def __post_init__(self):
         self.with_sample = True
         self.calculate_base_data()
+        self.shutter = { name: MockShutter(1200)
+                         for name in self.shutter_names }
 
     def calculate_base_data(self):
         n_pix = self.n_pixels
@@ -48,7 +78,14 @@ class MockSpectrograph:
 
     def grab_spectrum(self):
         time.sleep(max(self.integration_time * 1e-6, 0.001))
-        return self.simulate_spectrum(True, self.with_sample)
+        return self.simulate_spectrum(self.get_shutter_value('dark') > 0,
+                                      self.with_sample)
+
+    def get_shutter_value(self, axis):
+        return self.shutter[axis].get_value()
+
+    def set_shutter_value(self, axis, value):
+        return self.shutter[axis].move_at(value)
 
 
 if __name__ == '__main__':
