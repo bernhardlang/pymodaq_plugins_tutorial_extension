@@ -1,7 +1,8 @@
+from qtpy.QtCore import QSettings, QByteArray
 from qtpy import QtWidgets
 from pymodaq_gui import utils as gutils
 from pymodaq_gui.plotting.data_viewers import Viewer1D
-from pymodaq_utils.config import Config, ConfigError
+from pymodaq_utils.config import Config, ConfigError, get_set_config_dir
 from pymodaq_utils.logger import set_logger, get_module_name
 from pymodaq.utils.managers.modules import ModuleType
 from pymodaq.extensions.utils import CustomExt
@@ -25,6 +26,13 @@ class AbsorptionExtension(CustomExt):
     def __init__(self, parent: gutils.DockArea, dashboard):
         super().__init__(parent, dashboard)
         self.setup_ui()
+        config_dir = get_set_config_dir("gui-state", user=True)
+        settings_file_name = f'{config_dir}/{EXTENSION_NAME}.conf'
+        self.qt_settings = QSettings(settings_file_name, QSettings.NativeFormat)
+        self.read_settings(self.qt_settings)
+
+    def quit_fun(self):
+        self.write_settings(self.qt_settings)
 
     def setup_docks_and_widgets(self):
         self.spectrum_label = gutils.dock.DockLabel("Raw Data")
@@ -94,6 +102,21 @@ class AbsorptionExtension(CustomExt):
         self.x_axis = \
             Axis(label='Wavelength', units='nm',
                  data=self.detector.controller.wavelengths, index=0)
+
+    def write_settings(self, qt_settings):
+         qt_settings.setValue("geometry", self.mainwindow.saveGeometry())
+         qt_settings.setValue("dockarea", self.dockarea.saveState())
+
+    def read_settings(self, qt_settings):
+         geometry = self.qt_settings.value("geometry", QByteArray())
+         self.mainwindow.restoreGeometry(geometry)
+         state = self.qt_settings.value("dockarea", None)
+         if state is not None:
+             try:
+                 self.dockarea.restoreState(state)
+             except: # pyqtgraph's state restoring is not very fail safe
+                 # erase inconsistent settings in case pyqtgraph trips
+                 self.qt_settings.setValue("dockarea", None)
 
     def take_data(self, data: DataToExport):
         spectro_data = data.get_data_from_dim('Data1D')[0]
