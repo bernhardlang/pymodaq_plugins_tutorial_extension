@@ -1,3 +1,4 @@
+import numpy as np
 from qtpy.QtCore import QSettings, QByteArray
 from qtpy import QtWidgets
 from pymodaq_gui import utils as gutils
@@ -6,7 +7,7 @@ from pymodaq_utils.config import Config, ConfigError, get_set_config_dir
 from pymodaq_utils.logger import set_logger, get_module_name
 from pymodaq.utils.managers.modules import ModuleType
 from pymodaq.extensions.utils import CustomExt
-from pymodaq.utils.data import DataToExport, Axis
+from pymodaq.utils.data import DataFromPlugins, DataToExport, Axis
 from pymodaq_plugins_tutorial_extension.utils import Config as PluginConfig
 
 logger = set_logger(get_module_name(__file__))
@@ -19,9 +20,20 @@ EXTENSION_NAME = 'Absorption'
 CLASS_NAME = 'AbsorptionExtension'
 
 
-# todo: modify the name of this class to reflect its application and change the name in the main
-# method at the end of the script
 class AbsorptionExtension(CustomExt):
+
+    params = [
+        {'name': 'device_params', 'title': 'Device parameters', 'type': 'group',
+         'children': [
+             {'name': 'integration_time', 'title': 'Integration Time [ms]',
+              'type': 'float', 'min': 0.001, 'max': 10000, 'value': 50,
+              'tip': 'Integration time in seconds'},
+             {'name': 'averaging', 'title': 'Averaging',
+              'type': 'int', 'min': 1, 'max': 1000, 'value': 10,
+              'tip': 'Software Averaging'},
+           ]
+         },
+       ]
 
     def __init__(self, parent: gutils.DockArea, dashboard):
         super().__init__(parent, dashboard)
@@ -35,9 +47,16 @@ class AbsorptionExtension(CustomExt):
         self.write_settings(self.qt_settings)
 
     def setup_docks_and_widgets(self):
+        self.docks['settings'] = gutils.Dock('Application Settings')
+        self.dockarea.addDock(self.docks['settings'])
+        self.docks['settings'].addWidget(self.settings_tree)
+
         self.spectrum_label = gutils.dock.DockLabel("Raw Data")
         spectrum_dock = gutils.Dock('Data', label=self.spectrum_label)
-        self.docks['spectrum'] = self.dockarea.addDock(spectrum_dock)
+        self.docks['spectrum'] = \
+            self.dockarea.addDock(spectrum_dock, "right",
+                                  self.docks['settings'])
+
         spectrum_widget = QtWidgets.QWidget()
         self.spectrum_viewer = Viewer1D(spectrum_widget)
         self.spectrum_viewer.toolbar.hide()
@@ -76,20 +95,10 @@ class AbsorptionExtension(CustomExt):
         self.connect_action('stop', self.stop_acquiring)
 
     def value_changed(self, param):
-        """ Actions to perform when one of the param's value in self.settings is changed from the
-        user interface
-
-        For instance:
-        if param.name() == 'do_something':
-            if param.value():
-                print('Do something')
-                self.settings.child('main_settings', 'something_done').setValue(False)
-
-        Parameters
-        ----------
-        param: (Parameter) the parameter whose value just changed
-        """
-        pass
+        if param.name() == "integration_time":
+            self.detector.settings.child('detector_settings',
+                                         'integration_time') \
+                                  .setValue(param.value())
 
     def do_things_after_experiment_set(self, experiment_name: str):
         self.modules_manager.detectors_all = \
@@ -120,9 +129,41 @@ class AbsorptionExtension(CustomExt):
 
     def take_data(self, data: DataToExport):
         spectro_data = data.get_data_from_dim('Data1D')[0]
-        self.spectrum_viewer.show_data(spectro_data)
+        self.n_samples = self.accumulate_data(spectro_data[0], self.n_samples)
+        if self.n_samples < self.n_average:
+            return
+
+        if self.n_average < 2:
+            self.spectrum_viewer.show_data(spectro_data)
+            return
+
+        self.mean_current, self.error_current = \
+            self.average_data(self.sum_data, self.squares_data, self.n_samples)
+        self.n_samples = 0
+        dfp = DataFromPlugins(name='current',
+                              data=[self.mean_current, self.error_current],
+                              dim='Data1D', labels=['current', 'error'],
+                              axes=[self.x_axis])
+        self.spectrum_viewer.show_data(dfp)
+
+    def accumulate_data(self, data, n_samples):
+        if n_samples:
+            self.sum_data += data
+            self.squares_data += data**2
+        else:
+            self.sum_data = data
+            self.squares_data = data**2
+        return n_samples + 1
+
+    def average_data(self, sum_data, squares_data, n_samples):
+        mean = sum_data / n_samples
+        error = np.sqrt((n_samples * squares_data - sum_data**2)
+                        / (n_samples**2 * (n_samples - 1)))
+        return mean, error
 
     def start_acquiring(self):
+        self.n_samples = 0
+        self.n_average = self.settings.child('device_params')['averaging']
         self._actions["acquire"].setEnabled(False)
         self._actions["stop"].setEnabled(True)
         self.detector.grab()
