@@ -1,9 +1,11 @@
 from qtpy import QtWidgets
-
 from pymodaq_gui import utils as gutils
+from pymodaq_gui.plotting.data_viewers import Viewer1D
 from pymodaq_utils.config import Config, ConfigError
 from pymodaq_utils.logger import set_logger, get_module_name
+from pymodaq.utils.managers.modules import ModuleType
 from pymodaq.extensions.utils import CustomExt
+from pymodaq.utils.data import DataToExport, Axis
 from pymodaq_plugins_tutorial_extension.utils import Config as PluginConfig
 
 logger = set_logger(get_module_name(__file__))
@@ -25,10 +27,8 @@ class AbsorptionExtension(CustomExt):
         self.setup_ui()
 
     def setup_docks_and_widgets(self):
-        self.create_dashboard_toolbar()
-
-        self.spectrum_label = DockLabel("Raw Data")
-        spectrum_dock = Dock('Data', label=self.spectrum_label)
+        self.spectrum_label = gutils.dock.DockLabel("Raw Data")
+        spectrum_dock = gutils.Dock('Data', label=self.spectrum_label)
         self.docks['spectrum'] = self.dockarea.addDock(spectrum_dock)
         spectrum_widget = QtWidgets.QWidget()
         self.spectrum_viewer = Viewer1D(spectrum_widget)
@@ -57,28 +57,15 @@ class AbsorptionExtension(CustomExt):
         self.create_dashboard_toolbar(add_break=False)
 
     def setup_actions(self):
-        return
-        """Method where to create actions to be subclassed. Mandatory
-
-        Examples
-        --------
-        >>> self.add_action('quit', 'Quit', 'close2', "Quit program")
-        >>> self.add_action('grab', 'Grab', 'camera', "Grab from camera", checkable=True)
-        >>> self.add_action('load', 'Load', 'Open', "Load target file (.h5, .png, .jpg) or data from camera"
-            , checkable=False)
-        >>> self.add_action('save', 'Save', 'SaveAs', "Save current data", checkable=False)
-
-        See Also
-        --------
-        ActionManager.add_action
-        """
-        raise NotImplementedError(f'You have to define actions here')
+        self.add_action('acquire', 'Acquire', 'run2',
+                        "Acquire", checkable=False, toolbar=self.toolbar)
+        self.add_action('stop', 'Stop', 'stop2',
+                        "Stop", checkable=False, toolbar=self.toolbar)
+        self._actions["stop"].setEnabled(False)
 
     def connect_things(self):
-        return
-        """Connect actions and/or other widgets signal to methods"""
-        raise NotImplementedError
-
+        self.connect_action('acquire', self.start_acquiring)
+        self.connect_action('stop', self.stop_acquiring)
 
     def value_changed(self, param):
         """ Actions to perform when one of the param's value in self.settings is changed from the
@@ -96,6 +83,32 @@ class AbsorptionExtension(CustomExt):
         """
         pass
 
+    def do_things_after_experiment_set(self, experiment_name: str):
+        self.modules_manager.detectors_all = \
+            self.dashboard.modules_manager.detectors_all
+
+        self.detector = \
+            self.modules_manager.get_mod_from_name('Spectrometer',
+                                                   ModuleType.Detector)
+        self.detector.grab_done_signal.connect(self.take_data)
+        self.x_axis = \
+            Axis(label='Wavelength', units='nm',
+                 data=self.detector.controller.wavelengths, index=0)
+
+    def take_data(self, data: DataToExport):
+        spectro_data = data.get_data_from_dim('Data1D')[0]
+        self.spectrum_viewer.show_data(spectro_data)
+
+    def start_acquiring(self):
+        self._actions["acquire"].setEnabled(False)
+        self._actions["stop"].setEnabled(True)
+        self.detector.grab()
+
+    def stop_acquiring(self):
+        self.detector.stop_grab()
+        self._actions["acquire"].setEnabled(True)
+        self._actions["stop"].setEnabled(False)
+
 
 def main():
     import sys
@@ -108,7 +121,7 @@ def main():
     win, dashboard = create_load_dashboard()
     win.mainwindow.setVisible(False)
 
-    win_ext, ext = create_extension(dashboard, CustomExtensionTemplate)
+    win_ext, ext = create_extension(dashboard, AbsorptionExtension)
     win_ext.show()
 
     sys.exit(app.exec())
