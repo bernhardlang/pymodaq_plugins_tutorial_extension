@@ -18,6 +18,7 @@ class MockSpectrograph:
     absorption: float = 0.3
 
     def __post_init__(self):
+        self.with_sample = True
         self.calculate_base_data()
 
     def calculate_base_data(self):
@@ -44,6 +45,10 @@ class MockSpectrograph:
         max_adc = (1 << self.adc_bits) - 1
         data = np.where(data < max_adc, np.floor(data), max_adc)
         return data, time.time()
+
+    def grab_spectrum(self):
+        time.sleep(max(self.integration_time * 1e-6, 0.001))
+        return self.simulate_spectrum(True, self.with_sample)
 
 
 if __name__ == '__main__':
