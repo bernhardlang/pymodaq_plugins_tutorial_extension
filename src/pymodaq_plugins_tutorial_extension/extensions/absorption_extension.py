@@ -1,6 +1,6 @@
 from qtpy import QtWidgets
-
 from pymodaq_gui import utils as gutils
+from pymodaq_gui.plotting.data_viewers import Viewer1D
 from pymodaq_utils.config import Config, ConfigError
 from pymodaq_utils.logger import set_logger, get_module_name
 from pymodaq.extensions.utils import CustomExt
@@ -25,10 +25,8 @@ class AbsorptionExtension(CustomExt):
         self.setup_ui()
 
     def setup_docks_and_widgets(self):
-        self.create_dashboard_toolbar()
-
-        self.spectrum_label = DockLabel("Raw Data")
-        spectrum_dock = Dock('Data', label=self.spectrum_label)
+        self.spectrum_label = gutils.dock.DockLabel("Raw Data")
+        spectrum_dock = gutils.Dock('Data', label=self.spectrum_label)
         self.docks['spectrum'] = self.dockarea.addDock(spectrum_dock)
         spectrum_widget = QtWidgets.QWidget()
         self.spectrum_viewer = Viewer1D(spectrum_widget)
@@ -108,7 +106,7 @@ def main():
     win, dashboard = create_load_dashboard()
     win.mainwindow.setVisible(False)
 
-    win_ext, ext = create_extension(dashboard, CustomExtensionTemplate)
+    win_ext, ext = create_extension(dashboard, AbsorptionExtension)
     win_ext.show()
 
     sys.exit(app.exec())
