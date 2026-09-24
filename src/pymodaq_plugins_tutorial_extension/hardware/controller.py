@@ -31,6 +31,14 @@ class MockSpectrograph:
             self.absorption \
             * np.exp(-((self.pixels - n_pix / 4) / (n_pix / 8))**2)
 
+    def simulate_spectrum(self, shutter_open: bool, sample: bool):
+        data = np.random.normal(loc=self.dark_level * self.integration_time,
+                                scale=self.readout_noise, size=self.n_pixels)
+
+        max_adc = (1 << self.adc_bits) - 1
+        data = np.where(data < max_adc, np.floor(data), max_adc)
+        return data, time.time()
+
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
@@ -39,4 +47,11 @@ if __name__ == '__main__':
     plt.plot(spectrograph.wavelengths, spectrograph.spectrum)
     plt.plot(spectrograph.wavelengths, spectrograph.absorption)
     plt.legend(['light spectrum', 'absorption'])
+    plt.show()
+
+
+    dark, time_stamp = \
+    spectrograph.simulate_spectrum(shutter_open=False, sample=False)
+    plt.plot(dark)
+    plt.title('dark')
     plt.show()
