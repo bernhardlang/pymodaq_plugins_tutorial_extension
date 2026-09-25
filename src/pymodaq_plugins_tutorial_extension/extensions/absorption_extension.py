@@ -1,4 +1,6 @@
+import csv
 import numpy as np
+from os import path
 from qtpy.QtCore import QSettings, QByteArray
 from qtpy import QtWidgets
 from pymodaq_gui import utils as gutils
@@ -132,6 +134,8 @@ class AbsorptionExtension(CustomExt):
         self.add_action('reference', 'Take Reference', 'lightbulb',
                         "Take Reference", checkable=False,
                         toolbar=self.toolbar)
+        self.add_action('save', 'Save', 'SaveAs', "Save current data",
+                        checkable=False, toolbar=self.toolbar)        
         self._actions["stop"].setEnabled(False)
 
     def adjust_actions(self):
@@ -151,12 +155,14 @@ class AbsorptionExtension(CustomExt):
         for name,state in zip(["acquire", "background", "reference"],
                               action_states[mode]):
             self._actions[name].setEnabled(state)
+        self._actions['save'].setEnabled(self._actions['acquire'].isEnabled())
 
     def connect_things(self):
         self.connect_action('acquire', self.start_acquiring)
         self.connect_action('stop', self.stop_acquiring)
         self.connect_action('background', self.start_background)
         self.connect_action('reference', self.start_reference)
+        self.connect_action('save', self.save_current_data)
 
     def value_changed(self, param):
         if param.name() == "integration_time":
@@ -365,6 +371,7 @@ class AbsorptionExtension(CustomExt):
             self.detector.grab()
         else: # idle mode
             self.adjust_actions()
+
     def stop_acquiring(self):
         self.detector.stop_grab()
         self.acquisition_mode = 'idle'
@@ -372,6 +379,77 @@ class AbsorptionExtension(CustomExt):
         self._actions["acquire"].setEnabled(True)
         self._actions["stop"].setEnabled(False)
 
+    def save_current_data(self):
+        directory = self.qt_settings.value('data-dir', None)
+        if directory is None:
+            directory = "."
+        result = QtWidgets.QFileDialog.getSaveFileName(caption="Save Data",
+                                                       dir=directory,
+                                                       filter="*.csv")
+        if result is None or not len(result[0]):
+            return
+
+        self.qt_settings.setValue('data-dir', path.dirname(result[0]))
+
+        wavelengths = self.detector.controller.wavelengths
+        with open(result[0], "wt") as csv_file:
+            writer = csv.writer(csv_file, delimiter=',',
+                                quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            if self.settings['measurement_mode'] == 'Raw' \
+               or not self.have_background:
+                writer.writerow(['wavelength', 'raw data', 'error'])
+                for i,wl in enumerate(wavelengths):
+                    writer.writerow(['%.1f' % wl, '%.3f' % self.mean_current[i],
+                                    '%.3f' % self.error_current[i]])
+                return
+
+            if self.settings['measurement_mode'] == 'Background':
+                writer.writerow(['wavelength', 'current data', 'current error',
+                                 'background', 'error background',
+                                 'background subtracted', 'error'])
+                for i,wl in enumerate(wavelengths):
+                    writer.writerow(['%.1f' % wl, '%.3f' % self.mean_current[i],
+                                     '%.1f' % self.error_current[i],
+                                     '%.1f' % self.background[i],
+                                     '%.1f' % self.error_background[i],
+                                     '%.1f' % self.mean_signal[i],
+                                     '%.1f' % self.error_signal[i]])
+                return
+
+            # self.settings['measurement_mode'] == 'Absorption'
+            if not self.have_reference:
+                writer.writerow(['wavelength', 'current data', 'current error',
+                                 'background', 'error background'])
+                for i,wl in enumerate(wavelengths):
+                    writer.writerow(['%.1f' % wl, '%.3f' % self.mean_current[i],
+                                     '%.1f' % self.error_current[i],
+                                     '%.1f' % self.background[i],
+                                     '%.1f' % self.error_background[i]])
+                return
+            if hasattr(self, 'absorption') and self.absorption is not None:
+                writer.writerow(['wavelength', 'current data', 'current error',
+                                 'background', 'error background', 'reference',
+                                 'error reference', 'absorption', 'error'])
+                for i,wl in enumerate(wavelengths):
+                    writer.writerow(['%.1f' % wl, '%.3f' % self.mean_current[i],
+                                     '%.3f' % self.error_current[i],
+                                     '%.3f' % self.background[i],
+                                     '%.3f' % self.error_background[i],
+                                     '%.3f' % self.reference[i],
+                                     '%.3f' % self.error_reference[i],
+                                     '%.6f' % self.absorption[i],
+                                     '%.6f' % self.error_absorption[i]])
+            else:
+                writer.writerow(['wavelength', 'current data', 'current error',
+                                 'background', 'error background', 'reference',
+                                 'error reference'])
+                for i,wl in enumerate(wavelengths):
+                    writer.writerow(['%.1f' % wl, '%.3f' % self.mean_current[i],
+                                     '%.3f' % self.error_current[i],
+                                     '%.3f' % self.background[i],
+                                     '%.3f' % self.error_background[i],
+                                     '%.3f' % self.reference[i],
+                                     '%.3f' % self.error_reference[i]])
 
 def main():
     import sys
