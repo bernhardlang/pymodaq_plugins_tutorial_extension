@@ -48,7 +48,7 @@ class MockSpectrograph:
     def __post_init__(self):
         self.with_sample = True
         self.calculate_base_data()
-        self.shutter = { name: MockShutter(1200)
+        self.shutter = { name: MockShutter(1800)
                          for name in self.shutter_names }
 
     def calculate_base_data(self):

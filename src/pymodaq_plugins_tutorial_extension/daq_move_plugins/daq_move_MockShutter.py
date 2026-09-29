@@ -56,7 +56,7 @@ class DAQ_Move_MockShutter(DAQ_Move_base):
         else:
             self.controller = controller
 
-        info = "Mock polarizer line initialised"
+        info = "Mock shutter initialised"
         return info, True
 
     def move_abs(self, value: DataActuator):

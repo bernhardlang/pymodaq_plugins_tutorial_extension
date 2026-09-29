@@ -108,6 +108,9 @@ class DAQ_1DViewer_MockSpectro(DAQ_Viewer_base):
         self.dte_signal.emit(DataToExport(name='spectrum',
                                           data=[dfp_spectrum, dfp_time_stamp]))
 
+    def set_shutter_value(self, axis, value):
+        self.controller.set_shutter_value(axis, value)
+
     def stop(self):
         """Stop the current grab hardware wise if necessary"""
         pass
