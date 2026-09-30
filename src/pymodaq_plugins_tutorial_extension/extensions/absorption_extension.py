@@ -12,12 +12,12 @@ from pymodaq.extensions.utils import CustomExt
 from pymodaq.utils.data import DataFromPlugins, DataToExport, Axis
 from pymodaq_plugins_tutorial_extension.utils import Config as PluginConfig
 
+
 logger = set_logger(get_module_name(__file__))
 
 main_config = Config()
 plugin_config = PluginConfig()
 
-# todo: modify this as you wish
 EXTENSION_NAME = 'Absorption'
 CLASS_NAME = 'AbsorptionExtension'
 
@@ -63,6 +63,7 @@ class AbsorptionExtension(CustomExt):
         settings_file_name = f'{config_dir}/{EXTENSION_NAME}.conf'
         self.qt_settings = QSettings(settings_file_name, QSettings.NativeFormat)
         self.read_settings(self.qt_settings)
+        self.auto_config()
 
     def quit_fun(self):
         self.write_settings(self.qt_settings)
@@ -178,18 +179,95 @@ class AbsorptionExtension(CustomExt):
     def do_things_after_experiment_set(self, experiment_name: str):
         self.modules_manager.detectors_all = \
             self.dashboard.modules_manager.detectors_all
+        self.modules_manager.actuators_all = \
+            self.dashboard.modules_manager.actuators_all
 
+    def start_probing_devices(self):
+        self.device_count = -1
+        self.next_device_probe()
+
+    def self.next_device_probe()
+        self.device_count += 1
+        if self.device_count == len(self.modules_manager.detectors_all):
+        self.spectrometer_name = self.modules_manager.detectors_all[0].title
+        self.probe_detector = \
+            self.modules_manager.get_mod_from_name(self.spectrometer_name,
+                                                   ModuleType.Detector)
+        self.probe_detector.grab_done_signal.connect(self.take_auto_probe_data)
+        self.probe_detector.snap()
+
+    def auto_config(self):
+        """Select first existing spectrometer and shutter and probe spectrometer
+        for data."""
+
+        self.shutter_name = self.modules_manager.actuators_all[0].title
+        self.spectrometer_name = self.modules_manager.detectors_all[0].title
+        self.probe_detector = \
+            self.modules_manager.get_mod_from_name(self.spectrometer_name,
+                                                   ModuleType.Detector)
+        self.probe_detector.grab_done_signal.connect(self.take_auto_probe_data)
+        self.probe_detector.snap()
+
+    def take_auto_probe_data(self, data: DataToExport):
+        print("got auto config probe")
+        intensity_name, wavelength_name, axis_data = self.take_probe_data(data)
+        self.set_config(self.spectrometer_name, self.shutter_name,
+                        intensity_name, axis_data)
+
+    def take_probe_data(self, data: DataToExport):
+        """Analyze probe data from spectrometer.
+        If there is more than one 1dim data item, the names of both are returned
+        as list for the user to chose or the first one to pick in auto config.
+        If there is only one, the axis data from that one is taken. In case that
+        the data doesn't contain an axis, a generic axis containing pixel nubers
+        is generated.
+        """
+        self.probe_detector.grab_done_signal.disconnect()
+        data1D = data.get_data_from_dim('Data1D')
+        if len(data1D) > 1:
+            intensity_names = [d.name for d in data1D]
+            wavelength_names = [d.name for d in data1D]
+        elif len(data1D) == 1:
+            intensity_names = [data1D[0].name]
+            if data1D[0].n_axes:
+                wavelength_names = [f'--{data1D[0].name} axis--']
+                axis_data = data1D[0].axes[0].data
+            else:
+                wavelength_names = [f'--{data1D[0].name} pixels--']
+                l = len(data1D[0].data)
+                axis_data = np.linspace(0, l - 1, l)
+        else:
+            raise RuntimeError("Spectrometer didn't send 1Dim data")
+
+        return intensity_names[0], wavelength_names[0], axis_data
+
+    def set_config(self, spectrometer_name, shutter_name, intensity_name,
+                   axis_data):
+        if hasattr(self, 'detector'):
+            self.detector.grab_done_signal.disconnect()
         self.detector = \
-            self.modules_manager.get_mod_from_name('Spectrometer',
+            self.modules_manager.get_mod_from_name(spectrometer_name,
                                                    ModuleType.Detector)
         self.detector.grab_done_signal.connect(self.take_data)
-        self.x_axis = \
-            Axis(label='Wavelength', units='nm',
-                 data=self.detector.controller.wavelengths, index=0)
+
+        if hasattr(self, 'dark_shutter'):
+            self.dark_shutter.move_done_signal.disconnect()
         self.dark_shutter = \
-        self.modules_manager.get_mod_from_name('dark-shutter',
-                                                ModuleType.Actuator)
+            self.modules_manager.get_mod_from_name(shutter_name,
+                                                   ModuleType.Actuator)
         self.dark_shutter.move_done_signal.connect(self.shutter_ready)
+
+        self.x_axis = \
+            Axis(label='Wavelength', units='nm', data=axis_data, index=0)
+        print("done")
+
+    def config_dialog(self):
+        absorption_config = \
+            AbsorptionConfig([d.title for d in detectors],
+                             [a.title for a in actuators])
+        if absorption_config.exec()  == QDialog.Accept:
+            self.spectrometer_name = absorption_config.spectrometer
+            self.shutter_name = absorption_config.shutter
 
     def write_settings(self, qt_settings):
          qt_settings.setValue("geometry", self.mainwindow.saveGeometry())
@@ -220,6 +298,8 @@ class AbsorptionExtension(CustomExt):
 
     def take_data(self, data: DataToExport):
         spectro_data = data.get_data_from_dim('Data1D')[0]
+        if not hasattr(self, 'n_samples'):
+            return # quick fix
         self.n_samples = self.accumulate_data(spectro_data[0], self.n_samples)
         if self.n_samples < self.n_average:
             return
@@ -246,11 +326,6 @@ class AbsorptionExtension(CustomExt):
                 self.take_background(self.mean_current, self.error_current)
             else:
                 self.take_reference(self.mean_current, self.error_current)
-        dfp = DataFromPlugins(name='current',
-                              data=[self.mean_current, self.error_current],
-                              dim='Data1D', labels=['current', 'error'],
-                              axes=[self.x_axis])
-        self.spectrum_viewer.show_data(dfp)
 
     def accumulate_data(self, data, n_samples):
         if n_samples:
