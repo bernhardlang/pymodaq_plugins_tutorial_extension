@@ -246,11 +246,6 @@ class AbsorptionExtension(CustomExt):
                 self.take_background(self.mean_current, self.error_current)
             else:
                 self.take_reference(self.mean_current, self.error_current)
-        dfp = DataFromPlugins(name='current',
-                              data=[self.mean_current, self.error_current],
-                              dim='Data1D', labels=['current', 'error'],
-                              axes=[self.x_axis])
-        self.spectrum_viewer.show_data(dfp)
 
     def accumulate_data(self, data, n_samples):
         if n_samples:
