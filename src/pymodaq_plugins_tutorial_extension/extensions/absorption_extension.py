@@ -365,6 +365,7 @@ class AbsorptionExtension(CustomExt):
             self.detector.grab()
         else: # idle mode
             self.adjust_actions()
+
     def stop_acquiring(self):
         self.detector.stop_grab()
         self.acquisition_mode = 'idle'
